@@ -1,0 +1,85 @@
+#!/usr/bin/perl
+use strict;
+
+my $old_dbconns = 0;
+my $old_httpconns = 0;
+my $interval = 15;
+my %devices;
+
+if ($ARGV[0]) { $interval = $ARGV[0]; }
+
+while (1) {
+  chomp(my $date = `date "+%Y-%m-%d %H:%M:%S"`);
+  chomp(my $dbconns = `netstat -an | grep 3306 | wc | awk '{print \$1}'`);
+  my $diff_dbconns = $dbconns - $old_dbconns;
+  chomp(my $httpconns = `netstat -an | grep :80 | wc | awk '{print \$1}'`);
+  my $diff_httpconns = $httpconns - $old_httpconns;
+  my @data = `cat /proc/diskstats`;
+  foreach (@data) {
+    if (/(xvd\w+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/) {
+      my $device = $1;
+      $devices{$device}{'new'}{'reads_issued'} = $2;
+      $devices{$device}{'new'}{'reads_merged'} = $3;
+      $devices{$device}{'new'}{'sectors_read'} = $4;
+      $devices{$device}{'new'}{'ms_spent_reading'} = $5;
+      $devices{$device}{'new'}{'writes_completed'} = $6;
+      $devices{$device}{'new'}{'writes_merged'} = $7;
+      $devices{$device}{'new'}{'sectors_written'} = $8;
+      $devices{$device}{'new'}{'ms_spent_writing'} = $9;
+      $devices{$device}{'new'}{'ios_in_progress'} = $10;
+      $devices{$device}{'new'}{'ms_spent_ios'} = $11;
+      $devices{$device}{'new'}{'weighted_ms_spent_ios'} = $12;
+      #foreach my $stat (keys %{$devices{$device}}) {
+      #  foreach my $metric (keys %{$devices{$device}{$stat}}) {
+      #    print "$device - $stat - $metric\n";
+      #  }
+      #}
+      if (!exists($devices{$device}{'old'})) {
+        foreach my $metric (keys %{$devices{$device}{'new'}}) {
+          $devices{$device}{'old'}{$metric} = 0;
+        }
+      }
+    }
+  }
+
+  my $read_latency;
+  my $write_latency;
+  foreach my $device (keys %devices) {
+    foreach my $metric (keys %{$devices{$device}{'new'}}) {
+      $devices{$device}{'diff'}{$metric} = $devices{$device}{'new'}{$metric} - $devices{$device}{'old'}{$metric};
+    }
+    if ($devices{$device}{'diff'}{'reads_issued'} == 0) {
+      $read_latency = 0;
+    } else {
+    $read_latency = $devices{$device}{'diff'}{'ms_spent_reading'} / $devices{$device}{'diff'}{'reads_issued'};
+    }
+    if ($devices{$device}{'diff'}{'writes_completed'} == 0) {
+      $write_latency = 0;
+    } else {
+      $write_latency = $devices{$device}{'diff'}{'ms_spent_writing'} / $devices{$device}{'diff'}{'writes_completed'};
+    }
+  }
+  my $dbsign = '+';
+  my $httpsign = '+';
+  if ($diff_dbconns < 0) { $dbsign = ''; }
+  if ($diff_httpconns < 0) { $httpsign = ''; }
+
+  print "-----------------------\n";
+  print "$date\n";
+  print "DB sockets open: $dbconns ($dbsign$diff_dbconns)\n";
+  print "HTTP sockets open: $httpconns ($httpsign$diff_httpconns)\n";
+  print "Device\tI/O reads (latency)  I/O writes (latency) Time spent doing I/O\n";
+  foreach my $device (sort keys %devices) {
+    print "$device\t$devices{$device}{diff}{reads_issued} ($read_latency ms)\t\t$devices{$device}{diff}{writes_completed} ($write_latency ms)\t$devices{$device}{diff}{ms_spent_ios} ms\n";
+  }
+
+  $old_dbconns = $dbconns;
+  $old_httpconns = $httpconns;
+  foreach my $device (keys %devices) {
+    foreach my $metric (keys %{$devices{$device}{'new'}}) {
+      $devices{$device}{'old'}{$metric} = $devices{$device}{'new'}{$metric};
+    }
+  }
+
+  sleep $interval;
+}
