@@ -10,13 +10,13 @@ if ($ARGV[0]) { $interval = $ARGV[0]; }
 
 while (1) {
   chomp(my $date = `date "+%Y-%m-%d %H:%M:%S"`);
-  chomp(my $dbconns = `netstat -an | grep 3306 | wc | awk '{print \$1}'`);
+  chomp(my $dbconns = `netstat -an | grep 27017 | wc | awk '{print \$1}'`);
   my $diff_dbconns = $dbconns - $old_dbconns;
   chomp(my $httpconns = `netstat -an | grep :80 | wc | awk '{print \$1}'`);
   my $diff_httpconns = $httpconns - $old_httpconns;
   my @data = `cat /proc/diskstats`;
   foreach (@data) {
-    if (/(xvd\w+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/) {
+    if (/((?:sd|xvd)\w+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/) {
       my $device = $1;
       $devices{$device}{'new'}{'reads_issued'} = $2;
       $devices{$device}{'new'}{'reads_merged'} = $3;
@@ -42,21 +42,21 @@ while (1) {
     }
   }
 
-  my $read_latency;
-  my $write_latency;
+  my %read_latency;
+  my %write_latency;
   foreach my $device (keys %devices) {
     foreach my $metric (keys %{$devices{$device}{'new'}}) {
       $devices{$device}{'diff'}{$metric} = $devices{$device}{'new'}{$metric} - $devices{$device}{'old'}{$metric};
     }
     if ($devices{$device}{'diff'}{'reads_issued'} == 0) {
-      $read_latency = 0;
+      $read_latency{$device} = 0;
     } else {
-    $read_latency = $devices{$device}{'diff'}{'ms_spent_reading'} / $devices{$device}{'diff'}{'reads_issued'};
+    $read_latency{$device} = $devices{$device}{'diff'}{'ms_spent_reading'} / $devices{$device}{'diff'}{'reads_issued'};
     }
     if ($devices{$device}{'diff'}{'writes_completed'} == 0) {
-      $write_latency = 0;
+      $write_latency{$device} = 0;
     } else {
-      $write_latency = $devices{$device}{'diff'}{'ms_spent_writing'} / $devices{$device}{'diff'}{'writes_completed'};
+      $write_latency{$device} = $devices{$device}{'diff'}{'ms_spent_writing'} / $devices{$device}{'diff'}{'writes_completed'};
     }
   }
   my $dbsign = '+';
@@ -67,10 +67,10 @@ while (1) {
   print "-----------------------\n";
   print "$date\n";
   print "DB sockets open: $dbconns ($dbsign$diff_dbconns)\n";
-  print "HTTP sockets open: $httpconns ($httpsign$diff_httpconns)\n";
+  #print "HTTP sockets open: $httpconns ($httpsign$diff_httpconns)\n";
   print "Device\tI/O reads (latency)  I/O writes (latency) Time spent doing I/O\n";
   foreach my $device (sort keys %devices) {
-    print "$device\t$devices{$device}{diff}{reads_issued} ($read_latency ms)\t\t$devices{$device}{diff}{writes_completed} ($write_latency ms)\t$devices{$device}{diff}{ms_spent_ios} ms\n";
+    printf("%s\t%6.2f (%.2f ms)\t%6.2f (%.2f ms)\t%6.2f ms\n", $device,$devices{$device}{'diff'}{'reads_issued'},$read_latency{$device},$devices{$device}{'diff'}{'writes_completed'},$write_latency{$device},$devices{$device}{'diff'}{'ms_spent_ios'});
   }
 
   $old_dbconns = $dbconns;
